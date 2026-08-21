@@ -2,7 +2,9 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getDataDirectory, getNotebookDataDirectory, normalizeNotebookId } from "@/lib/source-store";
 
-export type Notebook = { id: string; name: string; createdAt: string; updatedAt: string };
+export type NotebookRole = "owner" | "editor" | "viewer";
+export type NotebookMember = { userId: string; role: NotebookRole };
+export type Notebook = { id: string; name: string; ownerId?: string; members?: NotebookMember[]; createdAt: string; updatedAt: string };
 
 const storePath = join(getDataDirectory(), "notebooks.json");
 let writeQueue: Promise<void> = Promise.resolve();
@@ -36,11 +38,32 @@ export async function mutateNotebooks(update: (items: Notebook[]) => Notebook[])
   return result;
 }
 
+export async function claimLegacyNotebooks(userId: string) {
+  return mutateNotebooks((items) => items.map((item) => item.ownerId ? item : { ...item, ownerId: userId, members: [{ userId, role: "owner" as const }] }));
+}
+
+export function notebookRole(notebook: Notebook, userId: string): NotebookRole | null {
+  if (notebook.ownerId === userId) return "owner";
+  return notebook.members?.find((item) => item.userId === userId)?.role || null;
+}
+
+export async function readNotebooksForUser(userId: string) {
+  return (await readNotebooks()).filter((item) => notebookRole(item, userId));
+}
+
 export async function assertNotebook(notebookId?: string | null) {
   const id = normalizeNotebookId(notebookId);
   const notebook = (await readNotebooks()).find((item) => item.id === id);
   if (!notebook) throw new Error("笔记本不存在");
   return notebook;
+}
+
+export async function assertNotebookAccess(notebookId: string | null | undefined, userId: string, required: "view" | "edit" | "owner" = "view") {
+  const notebook = await assertNotebook(notebookId);
+  const role = notebookRole(notebook, userId);
+  const allowed = required === "view" ? Boolean(role) : required === "edit" ? role === "owner" || role === "editor" : role === "owner";
+  if (!allowed) throw new Error("无权访问此笔记本");
+  return { notebook, role: role! };
 }
 
 export async function removeNotebookData(notebookId: string) {

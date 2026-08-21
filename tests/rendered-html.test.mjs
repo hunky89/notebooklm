@@ -11,31 +11,29 @@ async function render() {
   }, { waitUntil() {}, passThroughOnException() {} });
 }
 
-test("server-renders the Nota knowledge workspace", async () => {
+test("server-renders the authenticated Nota shell", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await response.text();
   assert.match(html, /Nota — 让资料，成为答案/);
-  assert.match(html, /与资料对话/);
-  assert.match(html, /自动摘要/);
-  assert.match(html, /思维导图/);
-  assert.match(html, /记忆卡/);
-  assert.match(html, /Wiki/);
-  assert.match(html, /\.pptx/);
-  assert.match(html, /可点击定位的引用/);
+  assert.match(html, /正在加载你的研究空间/);
+  assert.match(html, /auth-shell/);
 });
 
 test("keeps source citations and generated knowledge wired to APIs", async () => {
-  const [page, sourceRoute, chatRoute, knowledgeRoute, parser] = await Promise.all([
+  const [page, sourceRoute, chatRoute, knowledgeRoute, authRoute, parser] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/sources/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/chat/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/knowledge/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/auth/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/document-parser.ts", import.meta.url), "utf8"),
   ]);
   assert.match(page, /openSource\(citation\.sourceId, citation\.segmentId\)/);
   assert.match(page, /\/api\/knowledge/);
+  assert.match(page, /创建管理员账户/);
+  assert.match(authRoute, /createInitialUser/);
   assert.match(sourceRoute, /originalFile/);
   assert.match(chatRoute, /sourceIndex \+ 1/);
   assert.match(knowledgeRoute, /mindmap/);

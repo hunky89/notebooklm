@@ -1,10 +1,11 @@
 import { askMiniMax } from "@/lib/minimax";
 import { readSources, type StoredSource } from "@/lib/source-store";
 import { readKnowledge, writeKnowledge, type CitationRef, type KnowledgeArtifacts, type MindNode } from "@/lib/knowledge-store";
-import { assertNotebook } from "@/lib/notebook-store";
+import { assertNotebookAccess } from "@/lib/notebook-store";
+import { AuthError, requireRequestUser } from "@/lib/auth-store";
 
 function sourceSignature(sources: StoredSource[]) {
-  return sources.map((source) => `${source.id}:${source.createdAt}:${source.segments.length}`).join("|");
+  return sources.map((source) => `${source.id}:${source.version || 1}:${source.updatedAt || source.createdAt}:${source.segments.length}`).join("|");
 }
 
 function buildContext(sources: StoredSource[]) {
@@ -22,19 +23,21 @@ function parseJson(raw: string) {
   return JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>;
 }
 
-function normalizeArtifacts(raw: Record<string, any>, context: ReturnType<typeof buildContext>, signature: string): KnowledgeArtifacts {
+function asRecord(value: unknown): Record<string, unknown> { return value && typeof value === "object" ? value as Record<string, unknown> : {}; }
+
+function normalizeArtifacts(raw: Record<string, unknown>, context: ReturnType<typeof buildContext>, signature: string): KnowledgeArtifacts {
   const referenceMap = new Map(context.map((item) => [item.token, { sourceId: item.source.id, segmentId: item.segment.id }]));
   const citations = (value: unknown): CitationRef[] => Array.isArray(value)
-    ? value.map((item) => referenceMap.get(String(item).replace(/[\[\]]/g, ""))).filter((item): item is CitationRef => Boolean(item)).slice(0, 5)
+    ? value.map((item) => referenceMap.get(String(item).replaceAll("[", "").replaceAll("]", ""))).filter((item): item is CitationRef => Boolean(item)).slice(0, 5)
     : [];
-  const citedText = (item: any) => ({ text: String(item?.text || "").slice(0, 1200), citations: citations(item?.citations) });
-  const mindNode = (item: any, depth = 0): MindNode => ({
-    label: String(item?.label || (depth ? "主题" : "知识地图")).slice(0, 100),
-    note: item?.note ? String(item.note).slice(0, 300) : undefined,
-    citations: citations(item?.citations),
-    children: depth >= 2 || !Array.isArray(item?.children) ? [] : item.children.slice(0, 7).map((child: any) => mindNode(child, depth + 1)),
-  });
-  const summary = raw.summary || {};
+  const citedText = (value: unknown) => { const item = asRecord(value); return { text: String(item.text || "").slice(0, 1200), citations: citations(item.citations) }; };
+  const mindNode = (value: unknown, depth = 0): MindNode => { const item = asRecord(value); return ({
+    label: String(item.label || (depth ? "主题" : "知识地图")).slice(0, 100),
+    note: item.note ? String(item.note).slice(0, 300) : undefined,
+    citations: citations(item.citations),
+    children: depth >= 2 || !Array.isArray(item.children) ? [] : item.children.slice(0, 7).map((child) => mindNode(child, depth + 1)),
+  }); };
+  const summary = asRecord(raw.summary);
   return {
     generatedAt: new Date().toISOString(),
     sourceSignature: signature,
@@ -44,22 +47,26 @@ function normalizeArtifacts(raw: Record<string, any>, context: ReturnType<typeof
       points: Array.isArray(summary.points) ? summary.points.slice(0, 8).map(citedText) : [],
     },
     mindmap: mindNode(raw.mindmap),
-    cards: Array.isArray(raw.cards) ? raw.cards.slice(0, 12).map((item: any) => ({ question: String(item?.question || "").slice(0, 300), answer: String(item?.answer || "").slice(0, 900), citations: citations(item?.citations) })).filter((item: any) => item.question && item.answer) : [],
-    wiki: Array.isArray(raw.wiki) ? raw.wiki.slice(0, 10).map((item: any) => ({ title: String(item?.title || "条目").slice(0, 120), content: String(item?.content || "").slice(0, 1800), citations: citations(item?.citations) })).filter((item: any) => item.content) : [],
+    cards: Array.isArray(raw.cards) ? raw.cards.slice(0, 12).map((value) => { const item = asRecord(value); return { question: String(item.question || "").slice(0, 300), answer: String(item.answer || "").slice(0, 900), citations: citations(item.citations) }; }).filter((item) => item.question && item.answer) : [],
+    wiki: Array.isArray(raw.wiki) ? raw.wiki.slice(0, 10).map((value) => { const item = asRecord(value); return { title: String(item.title || "条目").slice(0, 120), content: String(item.content || "").slice(0, 1800), citations: citations(item.citations) }; }).filter((item) => item.content) : [],
   };
 }
 
 export async function GET(request: Request) {
-  const notebook = await assertNotebook(new URL(request.url).searchParams.get("notebookId"));
-  const sources = await readSources(notebook.id);
-  const knowledge = await readKnowledge(notebook.id);
-  return Response.json({ knowledge, stale: Boolean(knowledge && knowledge.sourceSignature !== sourceSignature(sources)) });
+  try {
+    const user = await requireRequestUser(request);
+    const { notebook } = await assertNotebookAccess(new URL(request.url).searchParams.get("notebookId"), user.id);
+    const sources = (await readSources(notebook.id)).filter((source) => source.enabled !== false);
+    const knowledge = await readKnowledge(notebook.id);
+    return Response.json({ knowledge, stale: Boolean(knowledge && knowledge.sourceSignature !== sourceSignature(sources)) });
+  } catch (error) { return routeError(error); }
 }
 
 export async function POST(request: Request) {
   try {
-    const notebook = await assertNotebook(new URL(request.url).searchParams.get("notebookId"));
-    const sources = await readSources(notebook.id);
+    const user = await requireRequestUser(request);
+    const { notebook } = await assertNotebookAccess(new URL(request.url).searchParams.get("notebookId"), user.id, "edit");
+    const sources = (await readSources(notebook.id)).filter((source) => source.enabled !== false);
     if (!sources.length) return Response.json({ error: "请先导入资料" }, { status: 400 });
     const signature = sourceSignature(sources);
     const existing = await readKnowledge(notebook.id);
@@ -80,7 +87,10 @@ export async function POST(request: Request) {
       } catch (error) { lastError = error; }
     }
     throw lastError;
-  } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "知识库生成失败" }, { status: 500 });
-  }
+  } catch (error) { return routeError(error); }
+}
+
+function routeError(error: unknown) {
+  const status = error instanceof AuthError ? error.status : (error instanceof Error && error.message.startsWith("无权") ? 403 : 500);
+  return Response.json({ error: error instanceof Error ? error.message : "请求失败" }, { status });
 }

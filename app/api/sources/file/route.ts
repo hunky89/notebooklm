@@ -2,12 +2,14 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { readSources } from "@/lib/source-store";
-import { assertNotebook } from "@/lib/notebook-store";
+import { assertNotebookAccess } from "@/lib/notebook-store";
+import { requireRequestUser } from "@/lib/auth-store";
 
 export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
   const id = params.get("id");
-  const notebook = await assertNotebook(params.get("notebookId"));
+  const user = await requireRequestUser(request);
+  const { notebook } = await assertNotebookAccess(params.get("notebookId"), user.id);
   const source = (await readSources(notebook.id)).find((item) => item.id === id);
   if (!source?.originalFile) return Response.json({ error: "原文件不存在" }, { status: 404 });
   try {

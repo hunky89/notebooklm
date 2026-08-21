@@ -1,4 +1,5 @@
-import { assertNotebook, mutateNotebooks, readNotebooks, removeNotebookData, type Notebook } from "@/lib/notebook-store";
+import { assertNotebookAccess, mutateNotebooks, readNotebooksForUser, removeNotebookData, type Notebook } from "@/lib/notebook-store";
+import { AuthError, requireRequestUser } from "@/lib/auth-store";
 
 function cleanName(value: unknown) {
   const name = String(value || "").trim().replace(/\s+/g, " ");
@@ -6,15 +7,19 @@ function cleanName(value: unknown) {
   return name.slice(0, 60);
 }
 
-export async function GET() {
-  return Response.json({ notebooks: await readNotebooks() });
+export async function GET(request: Request) {
+  try {
+    const user = await requireRequestUser(request);
+    return Response.json({ notebooks: await readNotebooksForUser(user.id) });
+  } catch (error) { return authError(error); }
 }
 
 export async function POST(request: Request) {
   try {
+    const user = await requireRequestUser(request);
     const body = await request.json() as { name?: string };
     const now = new Date().toISOString();
-    const notebook: Notebook = { id: crypto.randomUUID(), name: cleanName(body.name), createdAt: now, updatedAt: now };
+    const notebook: Notebook = { id: crypto.randomUUID(), name: cleanName(body.name), ownerId: user.id, members: [{ userId: user.id, role: "owner" }], createdAt: now, updatedAt: now };
     await mutateNotebooks((items) => [notebook, ...items]);
     return Response.json({ notebook }, { status: 201 });
   } catch (error) {
@@ -24,8 +29,9 @@ export async function POST(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
+    const user = await requireRequestUser(request);
     const body = await request.json() as { id?: string; name?: string };
-    const notebook = await assertNotebook(body.id);
+    const { notebook } = await assertNotebookAccess(body.id, user.id, "edit");
     const updated = { ...notebook, name: cleanName(body.name), updatedAt: new Date().toISOString() };
     await mutateNotebooks((items) => items.map((item) => item.id === updated.id ? updated : item));
     return Response.json({ notebook: updated });
@@ -36,12 +42,18 @@ export async function PATCH(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
+    const user = await requireRequestUser(request);
     const id = new URL(request.url).searchParams.get("id") || "";
-    await assertNotebook(id);
+    await assertNotebookAccess(id, user.id, "owner");
     await removeNotebookData(id);
     const notebooks = await mutateNotebooks((items) => items.filter((item) => item.id !== id));
-    return Response.json({ notebooks });
+    return Response.json({ notebooks: notebooks.filter((item) => item.ownerId === user.id || item.members?.some((member) => member.userId === user.id)) });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "删除失败" }, { status: 400 });
   }
+}
+
+function authError(error: unknown) {
+  const status = error instanceof AuthError ? error.status : (error instanceof Error && error.message.startsWith("无权") ? 403 : 400);
+  return Response.json({ error: error instanceof Error ? error.message : "请求失败" }, { status });
 }

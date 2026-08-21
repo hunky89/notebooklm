@@ -9,6 +9,12 @@ export type StoredSource = {
   color: string;
   content: string;
   segments: SourceSegment[];
+  enabled?: boolean;
+  labels?: string[];
+  version?: number;
+  checksum?: string;
+  updatedAt?: string;
+  versions?: Array<{ version: number; checksum?: string; createdAt: string; originalFile?: { path: string; name: string; mime: string } }>;
   url?: string;
   originalFile?: { path: string; name: string; mime: string };
   createdAt: string;
@@ -47,6 +53,10 @@ export async function readSources(notebookId?: string | null): Promise<StoredSou
     if (!Array.isArray(data)) return [];
     return data.map((source: StoredSource) => ({
       ...source,
+      enabled: source.enabled !== false,
+      labels: Array.isArray(source.labels) ? source.labels : [],
+      version: source.version || 1,
+      updatedAt: source.updatedAt || source.createdAt,
       segments: Array.isArray(source.segments) && source.segments.length
         ? source.segments
         : chunkText(source.content || "", "正文"),
@@ -80,9 +90,11 @@ export async function mutateSources(update: (sources: StoredSource[]) => StoredS
 
 export function publicSource(source: StoredSource, notebookId?: string | null) {
   const id = normalizeNotebookId(notebookId);
-  const { content: _content, segments: _segments, originalFile: _originalFile, ...metadata } = source;
   return {
-    ...metadata,
+    id: source.id, title: source.title, type: source.type, meta: source.meta, color: source.color,
+    enabled: source.enabled !== false, labels: source.labels || [], version: source.version || 1,
+    checksum: source.checksum, createdAt: source.createdAt, updatedAt: source.updatedAt || source.createdAt,
+    versions: source.versions, url: source.url,
     segmentCount: source.segments.length,
     originalUrl: source.url || (source.originalFile ? `/api/sources/file?id=${encodeURIComponent(source.id)}&notebookId=${encodeURIComponent(id)}` : undefined),
   };
