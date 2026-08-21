@@ -47,6 +47,14 @@ export async function authenticate(emailInput: string, password: string) {
   return user;
 }
 
+export async function changePassword(userId: string, currentPassword: string, newPassword: string) {
+  if (newPassword.length < 10) throw new AuthError("新密码至少需要 10 个字符", 400);
+  const data = await readJson(storePath, emptyAuth); const user = data.users.find((item) => item.id === userId); if (!user) throw new AuthError("账户不存在", 404);
+  await authenticate(user.email, currentPassword);
+  const salt = randomBytes(16).toString("hex"); const nextHash = await passwordHash(newPassword, salt);
+  await mutateJson(storePath, emptyAuth, (current) => ({ users: current.users.map((item) => item.id === userId ? { ...item, salt, passwordHash: nextHash } : item), sessions: current.sessions.filter((session) => session.userId !== userId) }));
+}
+
 export async function createSession(userId: string) {
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();

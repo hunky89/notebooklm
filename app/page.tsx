@@ -74,6 +74,8 @@ export default function Home() {
   const [guideLoading, setGuideLoading] = useState(false);
   const [tasks, setTasks] = useState<WorkspaceTask[]>([]);
   const [quota, setQuota] = useState<Quota | null>(null);
+  const [collapsedMindNodes, setCollapsedMindNodes] = useState<string[]>([]);
+  const [passwordDraft, setPasswordDraft] = useState({ current: "", next: "" });
   const fileInput = useRef<HTMLInputElement>(null);
   const activeNotebookRef = useRef("default");
   const notebookLoadSequence = useRef(0);
@@ -324,6 +326,18 @@ export default function Home() {
     void refreshKnowledge();
   }
 
+  async function updateSourceMetadata(source: SourceDetail, action?: "refresh") {
+    const labels = action ? undefined : window.prompt("输入来源分类标签，用英文逗号分隔", (source.labels || []).join(", "));
+    if (!action && labels === null) return;
+    const response = await fetch("/api/sources", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ notebookId: activeNotebookId, id: source.id, action, labels: action ? undefined : labels!.split(/[,，]/).map((item) => item.trim()).filter(Boolean) }) });
+    const data = await response.json() as { source?: Source; error?: string };
+    if (!response.ok || !data.source) return notify(data.error || "来源更新失败");
+    setSources((items) => items.map((item) => item.id === source.id ? data.source! : item));
+    await openSource(source.id);
+    if (action) void refreshKnowledge();
+    notify(action ? "网页来源已同步并记录版本" : "来源分类已更新");
+  }
+
   async function newConversation() {
     const selectedSourceIds = sources.filter((source) => source.enabled !== false).map((source) => source.id);
     const response = await fetch("/api/conversations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ notebookId: activeNotebookId, title: "新对话", selectedSourceIds }) });
@@ -368,6 +382,14 @@ export default function Home() {
     setSettings(data.settings);
     setSettingsOpen(false);
     notify("笔记本指令已保存");
+  }
+
+  async function changeAccountPassword() {
+    if (passwordDraft.next.length < 10) return notify("新密码至少需要 10 个字符");
+    const response = await fetch("/api/auth", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ currentPassword: passwordDraft.current, newPassword: passwordDraft.next }) });
+    const data = await response.json() as { error?: string };
+    if (!response.ok) return notify(data.error || "密码修改失败");
+    setSettingsOpen(false); setAuthUser(null); setPasswordDraft({ current: "", next: "" }); notify("密码已更新，请重新登录");
   }
 
   async function generateGuide() {
@@ -456,10 +478,18 @@ export default function Home() {
   }
 
   function mindBranch(node: MindNode, depth = 0) {
+    const key = `${depth}:${node.label}`;
+    const collapsed = collapsedMindNodes.includes(key);
     return <div className={`mind-branch depth-${depth}`} key={`${node.label}-${depth}`}>
-      <article className="mind-node"><b>{node.label}</b>{node.note && <p>{node.note}</p>}{citationButtons(node.citations)}</article>
-      {!!node.children?.length && <div className="mind-children">{node.children.map((child) => mindBranch(child, depth + 1))}</div>}
+      <article className="mind-node"><button className="mind-node-toggle" onClick={() => setCollapsedMindNodes((items) => items.includes(key) ? items.filter((item) => item !== key) : [...items, key])}><b>{node.label}</b>{node.note && <p>{node.note}</p>}{Boolean(node.children?.length) && <small>{collapsed ? "＋ 展开" : "－ 收起"}</small>}</button>{citationButtons(node.citations)}</article>
+      {!collapsed && !!node.children?.length && <div className="mind-children">{node.children.map((child) => mindBranch(child, depth + 1))}</div>}
     </div>;
+  }
+
+  function exportMindmap() {
+    if (!knowledge) return;
+    const url = URL.createObjectURL(new Blob([JSON.stringify(knowledge.mindmap, null, 2)], { type: "application/json" }));
+    const link = document.createElement("a"); link.href = url; link.download = `${activeNotebook.name}-mindmap.json`; link.click(); URL.revokeObjectURL(url);
   }
 
   async function share() {
@@ -548,7 +578,7 @@ export default function Home() {
               {knowledgeLoading && <div className="knowledge-loading"><span className="welcome-orb">✦</span><b>正在重建知识视图</b><p>分析全部来源并同步摘要、导图、记忆卡与 Wiki…</p></div>}
               {!knowledgeLoading && !knowledge && <div className="knowledge-loading"><span className="welcome-orb">＋</span><b>导入资料后自动生成</b><p>知识视图会随着来源变化自动更新。</p></div>}
               {!knowledgeLoading && knowledge && activeView === "summary" && <section className="summary-view"><span className="view-kicker">自动更新 · {new Date(knowledge.generatedAt).toLocaleString("zh-CN")}</span><h2>{knowledge.summary.title}</h2><p className="summary-overview">{knowledge.summary.overview}</p><div className="insight-list">{knowledge.summary.points.map((point, index) => <article key={index}><span>{String(index + 1).padStart(2, "0")}</span><div><p>{point.text}</p>{citationButtons(point.citations)}</div></article>)}</div></section>}
-              {!knowledgeLoading && knowledge && activeView === "mindmap" && <section className="mindmap-view"><div className="view-intro"><span className="view-kicker">自动知识结构</span><h2>思维导图</h2><p>每个节点都可追溯到原始资料。</p></div><div className="mindmap-canvas">{mindBranch(knowledge.mindmap)}</div></section>}
+              {!knowledgeLoading && knowledge && activeView === "mindmap" && <section className="mindmap-view"><div className="view-intro"><span className="view-kicker">自动知识结构</span><h2>思维导图</h2><p>点击节点折叠分支，每个节点都可追溯到原始资料。</p><button className="mindmap-export" onClick={exportMindmap}>↓ 导出结构</button></div><div className="mindmap-canvas">{mindBranch(knowledge.mindmap)}</div></section>}
               {!knowledgeLoading && knowledge && activeView === "cards" && <section className="cards-view"><div className="view-intro"><span className="view-kicker">主动回忆</span><h2>记忆卡片</h2><p>点击卡片翻看答案与来源。</p></div><div className="flashcard-grid">{knowledge.cards.map((card, index) => { const flipped = flippedCards.includes(index); return <article className={`flashcard ${flipped ? "flipped" : ""}`} key={index}><button className="flashcard-flip" onClick={() => setFlippedCards((items) => items.includes(index) ? items.filter((item) => item !== index) : [...items, index])}><small>{flipped ? "答案" : `问题 ${index + 1}`}</small><b>{flipped ? card.answer : card.question}</b><span>{flipped ? "点击返回问题" : "点击查看答案 →"}</span></button>{flipped && citationButtons(card.citations)}</article>; })}</div></section>}
               {!knowledgeLoading && knowledge && activeView === "wiki" && <section className="wiki-view"><aside>{knowledge.wiki.map((entry, index) => <button className={openWiki === index ? "active" : ""} key={entry.title} onClick={() => setOpenWiki(index)}><span>{String(index + 1).padStart(2, "0")}</span>{entry.title}</button>)}</aside>{knowledge.wiki[openWiki] && <article><span className="view-kicker">自动 Wiki 条目</span><h2>{knowledge.wiki[openWiki].title}</h2><ReactMarkdown>{knowledge.wiki[openWiki].content}</ReactMarkdown>{citationButtons(knowledge.wiki[openWiki].citations)}</article>}</section>}
             </div>}
@@ -573,10 +603,10 @@ export default function Home() {
           <form onSubmit={addUrl}><input value={urlValue} onChange={(event) => setUrlValue(event.target.value)} placeholder="https://example.com/article" aria-label="网页链接" /><button disabled={isImporting}>{isImporting ? "解析中" : "添加"}</button></form>
         </section>
       </div>}
-      {settingsOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setSettingsOpen(false)}><form className="source-modal settings-modal" onSubmit={saveSettings} onMouseDown={(event) => event.stopPropagation()}><button type="button" className="modal-close" onClick={() => setSettingsOpen(false)}>×</button><span className="modal-icon">⚙</span><h2>笔记本回答设置</h2><p>这些指令只作用于当前笔记本中的回答。</p><label>输出语言<input value={settings.language} onChange={(event) => setSettings({ ...settings, language: event.target.value })} /></label><label>回答篇幅<select value={settings.answerLength} onChange={(event) => setSettings({ ...settings, answerLength: event.target.value as NotebookSettings["answerLength"] })}><option value="short">精简</option><option value="balanced">平衡</option><option value="detailed">详细</option></select></label><label>目标读者<input value={settings.audience} onChange={(event) => setSettings({ ...settings, audience: event.target.value })} /></label><label>表达风格<input value={settings.style} onChange={(event) => setSettings({ ...settings, style: event.target.value })} /></label><label>自定义指令<textarea value={settings.customInstructions} onChange={(event) => setSettings({ ...settings, customInstructions: event.target.value })} placeholder="例如：优先比较不同来源的分歧" /></label><label className="check-row"><input type="checkbox" checked={settings.strictCitations} onChange={(event) => setSettings({ ...settings, strictCitations: event.target.checked })} />严格引用来源</label><label className="check-row"><input type="checkbox" checked={settings.allowGeneralKnowledge} onChange={(event) => setSettings({ ...settings, allowGeneralKnowledge: event.target.checked })} />允许补充通用知识</label><button className="primary-action">保存设置</button></form></div>}
+      {settingsOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setSettingsOpen(false)}><form className="source-modal settings-modal" onSubmit={saveSettings} onMouseDown={(event) => event.stopPropagation()}><button type="button" className="modal-close" onClick={() => setSettingsOpen(false)}>×</button><span className="modal-icon">⚙</span><h2>笔记本回答设置</h2><p>这些指令只作用于当前笔记本中的回答。</p><label>输出语言<input value={settings.language} onChange={(event) => setSettings({ ...settings, language: event.target.value })} /></label><label>回答篇幅<select value={settings.answerLength} onChange={(event) => setSettings({ ...settings, answerLength: event.target.value as NotebookSettings["answerLength"] })}><option value="short">精简</option><option value="balanced">平衡</option><option value="detailed">详细</option></select></label><label>目标读者<input value={settings.audience} onChange={(event) => setSettings({ ...settings, audience: event.target.value })} /></label><label>表达风格<input value={settings.style} onChange={(event) => setSettings({ ...settings, style: event.target.value })} /></label><label>自定义指令<textarea value={settings.customInstructions} onChange={(event) => setSettings({ ...settings, customInstructions: event.target.value })} placeholder="例如：优先比较不同来源的分歧" /></label><label className="check-row"><input type="checkbox" checked={settings.strictCitations} onChange={(event) => setSettings({ ...settings, strictCitations: event.target.checked })} />严格引用来源</label><label className="check-row"><input type="checkbox" checked={settings.allowGeneralKnowledge} onChange={(event) => setSettings({ ...settings, allowGeneralKnowledge: event.target.checked })} />允许补充通用知识</label><button className="primary-action">保存设置</button><div className="password-settings"><h3>修改登录密码</h3><input type="password" value={passwordDraft.current} onChange={(event) => setPasswordDraft({ ...passwordDraft, current: event.target.value })} placeholder="当前密码" /><input type="password" value={passwordDraft.next} onChange={(event) => setPasswordDraft({ ...passwordDraft, next: event.target.value })} placeholder="新密码（至少 10 位）" /><button type="button" disabled={!passwordDraft.current || passwordDraft.next.length < 10} onClick={changeAccountPassword}>修改并重新登录</button></div></form></div>}
       {selectedSource && <div className="modal-backdrop source-reader-backdrop" role="presentation" onMouseDown={() => setSelectedSource(null)}>
         <section className="source-reader" role="dialog" aria-modal="true" aria-labelledby="source-reader-title" onMouseDown={(event) => event.stopPropagation()}>
-          <header><div><span className={`file-icon ${selectedSource.color}`}>{selectedSource.type}</span><span><h2 id="source-reader-title">{selectedSource.title}</h2><p>{selectedSource.segments.length} 个可引用片段</p></span></div><div>{selectedSource.originalUrl && <a href={selectedSource.originalUrl} target="_blank" rel="noreferrer">打开原文件 ↗</a>}<button aria-label="关闭原文" onClick={() => setSelectedSource(null)}>×</button></div></header>
+          <header><div><span className={`file-icon ${selectedSource.color}`}>{selectedSource.type}</span><span><h2 id="source-reader-title">{selectedSource.title}</h2><p>{selectedSource.segments.length} 个可引用片段 · v{selectedSource.version || 1}{selectedSource.labels?.length ? ` · ${selectedSource.labels.join(" / ")}` : ""}</p></span></div><div><button className="reader-action" onClick={() => updateSourceMetadata(selectedSource)}>标签</button>{selectedSource.type === "WEB" && <button className="reader-action" onClick={() => updateSourceMetadata(selectedSource, "refresh")}>同步</button>}{selectedSource.originalUrl && <a href={selectedSource.originalUrl} target="_blank" rel="noreferrer">打开原文件 ↗</a>}<button aria-label="关闭原文" onClick={() => setSelectedSource(null)}>×</button></div></header>
           <div className="reader-guide"><div><b>Source Guide</b><small>摘要、主题、实体与建议问题</small></div><button disabled={guideLoading} onClick={generateGuide}>{guideLoading ? "生成中…" : sourceGuide ? "重新生成" : "生成指南"}</button></div>
           {sourceGuide && <section className="guide-content"><p>{sourceGuide.summary}</p><div>{sourceGuide.topics.map((topic) => <span key={topic}>{topic}</span>)}</div><h3>内容目录</h3><ol>{sourceGuide.outline.map((item) => <li key={item}>{item}</li>)}</ol><h3>建议提问</h3>{sourceGuide.suggestedQuestions.map((question) => <button key={question} onClick={() => { setSelectedSource(null); setActiveView("chat"); void ask(question); }}>{question}</button>)}</section>}
           <div className="reader-content">{selectedSource.segments.map((segment) => <article id={`segment-${segment.id}`} className={selectedSegmentId === segment.id ? "active" : ""} key={segment.id} onClick={() => setSelectedSegmentId(segment.id)}><span>{segment.label}</span><p>{segment.text}</p></article>)}</div>

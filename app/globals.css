@@ -167,6 +167,7 @@ button { cursor:pointer; }
 .settings-modal>label textarea { min-height:82px; resize:vertical; }
 .settings-modal .check-row { display:flex; grid-template-columns:auto 1fr; align-items:center; }
 .settings-modal .primary-action { width:100%; min-height:40px; margin-top:8px; border:0; border-radius:9px; background:var(--green); color:white; font-weight:700; }
+.password-settings { display:grid; gap:7px; margin-top:18px; padding-top:14px; border-top:1px solid var(--line); }.password-settings h3 { margin:0 0 3px; font-size:11px; }.password-settings input { min-height:38px; padding:0 10px; border:1px solid #dfe4df; border-radius:8px; }.password-settings button { min-height:38px; border:1px solid #d8e1da; border-radius:8px; background:#f4f7f2; color:var(--green); font-size:10px; }
 .save-note { margin-top:9px; padding:5px 9px; border:1px solid #d9e2db; border-radius:7px; background:#f7f9f5; color:var(--green); font-size:9px; }
 .notes-body { flex:1; min-height:0; overflow:auto; padding:18px; background:#f8faf7; }
 .note-compose { display:grid; gap:8px; margin-bottom:16px; padding:14px; border:1px solid var(--line); border-radius:12px; background:white; }
@@ -206,10 +207,11 @@ button { cursor:pointer; }
 .mind-children { display:grid; gap:12px; position:relative; }
 .mind-branch>.mind-node::after { content:""; position:absolute; width:32px; height:1px; right:-32px; top:50%; background:#bac9c0; }
 .mind-branch:only-child>.mind-node::after,.depth-2>.mind-node::after { display:none; }
-.mind-node { position:relative; width:180px; padding:12px; border:1px solid #dce4de; border-radius:11px; background:#fff; box-shadow:0 5px 16px #3850440d; }
+.mind-node { position:relative; width:180px; padding:12px; border:1px solid #dce4de; border-radius:11px; background:#fff; color:inherit; text-align:left; box-shadow:0 5px 16px #3850440d; }.mind-node-toggle { width:100%; padding:0; border:0; background:transparent; color:inherit; text-align:left; }
 .depth-0>.mind-node { border-color:#274f42; background:var(--green); color:white; }
 .mind-node b { font-size:11px; }.mind-node p { margin:5px 0 0; color:#78857f; font-size:9px; line-height:1.5; }.depth-0>.mind-node p { color:#d9e5df; }
 .mind-node .citations button { max-width:145px; }
+.mind-node-toggle>small { display:block; margin-top:7px; color:#829088; font-size:8px; }.depth-0>.mind-node .mind-node-toggle>small { color:#dce9e2; }.mindmap-export { margin-top:8px; padding:6px 9px; border:1px solid #dce4de; border-radius:7px; background:white; color:var(--green); font-size:8px; }
 .flashcard-grid { margin-top:22px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
 .flashcard { min-height:150px; padding:16px; display:flex; flex-direction:column; align-items:stretch; gap:8px; text-align:left; border:1px solid #e2e7e1; border-radius:13px; background:white; color:var(--ink); box-shadow:0 5px 14px #38504409; }
 .flashcard.flipped { border-color:#8fab9d; background:#f4f8f2; }
@@ -225,6 +227,7 @@ button { cursor:pointer; }
 .source-reader>header { min-height:75px; padding:13px 18px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--line); background:white; }
 .source-reader>header>div { display:flex; align-items:center; gap:10px; min-width:0; }.source-reader header span:nth-child(2) { min-width:0; }.source-reader h2 { max-width:420px; margin:0 0 4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }.source-reader header p { margin:0; color:#8b9690; font-size:9px; }
 .source-reader header a { padding:7px 10px; border:1px solid #dbe3dc; border-radius:8px; color:var(--green); text-decoration:none; font-size:9px; }.source-reader header button { width:31px; height:31px; border:0; border-radius:8px; background:#eef1ec; color:#63716a; font-size:17px; }
+.source-reader header .reader-action { width:auto; height:30px; padding:0 9px; font-size:9px; }
 .reader-guide { padding:12px 18px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--line); background:#f0f5ef; }
 .reader-guide>div { display:grid; gap:2px; }.reader-guide small { color:#849087; font-size:8px; }.reader-guide button { padding:7px 11px; border:0; border-radius:8px; background:var(--green); color:white; font-size:9px; }
 .guide-content { max-height:42vh; overflow:auto; padding:16px 18px; border-bottom:1px solid var(--line); background:white; font-size:10px; line-height:1.65; }
