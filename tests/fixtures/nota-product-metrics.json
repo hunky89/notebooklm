@@ -1,0 +1,10 @@
+{
+  "report": "青鸟计划试点补充指标",
+  "review_date": "2026-11-15",
+  "metrics": {
+    "citation_accuracy": "97.2%",
+    "median_response_time_seconds": 5.4,
+    "weekly_active_researchers": 8
+  },
+  "decision": "达到正式推广门槛"
+}

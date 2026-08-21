@@ -1,0 +1,11 @@
+services:
+  nota:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "80:3000"
+    environment:
+      NOTA_DATA_DIR: /data
+    volumes:
+      - /opt/nota-data:/data
