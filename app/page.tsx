@@ -1,6 +1,6 @@
 "use client";
 
-/* eslint-disable jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/click-events-have-key-events */
+/* eslint-disable jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/click-events-have-key-events, @next/next/no-img-element */
 
 import { ChangeEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -17,13 +17,15 @@ type Knowledge = {
   cards: Array<{ question: string; answer: string; citations: Citation[] }>;
   wiki: Array<{ title: string; content: string; citations: Citation[] }>;
 };
-type WorkspaceView = "chat" | "notes" | "summary" | "mindmap" | "cards" | "wiki";
+type WorkspaceView = "chat" | "notes" | "studio" | "summary" | "mindmap" | "cards" | "wiki";
 type Notebook = { id: string; name: string; createdAt: string; updatedAt: string };
 type AuthUser = { id: string; email: string; displayName: string };
 type Conversation = { id: string; title: string; messages?: Message[]; messageCount?: number; preview?: string; selectedSourceIds: string[]; updatedAt: string };
 type Note = { id: string; title: string; content: string; citations: Citation[]; updatedAt: string };
 type SourceGuide = { sourceId: string; generatedAt: string; summary: string; topics: string[]; entities: string[]; outline: string[]; suggestedQuestions: string[] };
 type NotebookSettings = { language: string; answerLength: "short" | "balanced" | "detailed"; audience: string; style: string; strictCitations: boolean; allowGeneralKnowledge: boolean; customInstructions: string };
+type WorkspaceTask = { id: string; type: "research" | "report" | "infographic"; status: "queued" | "running" | "completed" | "failed"; title: string; mode?: "fast" | "deep"; result?: { markdown?: string; imageSvg?: string }; error?: string; createdAt: string };
+type Quota = { limits: { notebooks: number; sourcesPerNotebook: number; aiRequestsPerMonth: number }; usage: { notebooks: number; aiRequests: number } };
 
 const initialSources: Source[] = [];
 
@@ -70,6 +72,8 @@ export default function Home() {
   const [settings, setSettings] = useState<NotebookSettings>({ language: "中文", answerLength: "balanced", audience: "通用读者", style: "清晰、严谨", strictCitations: true, allowGeneralKnowledge: false, customInstructions: "" });
   const [sourceGuide, setSourceGuide] = useState<SourceGuide | null>(null);
   const [guideLoading, setGuideLoading] = useState(false);
+  const [tasks, setTasks] = useState<WorkspaceTask[]>([]);
+  const [quota, setQuota] = useState<Quota | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const activeNotebookRef = useRef("default");
   const notebookLoadSequence = useRef(0);
@@ -87,6 +91,7 @@ export default function Home() {
       const data = await response.json() as { notebooks?: Notebook[] };
       const items = Array.isArray(data.notebooks) ? data.notebooks : [];
       setNotebooks(items);
+      fetch("/api/quota").then((result) => result.json()).then((data: Quota) => setQuota(data)).catch(() => undefined);
       const saved = window.localStorage.getItem("nota-active-notebook");
       const id = items.some((item) => item.id === saved) ? saved! : (items[0]?.id || "default");
       activeNotebookRef.current = id;
@@ -147,13 +152,14 @@ export default function Home() {
     setActiveView("chat");
     try {
       const query = notebookQuery(notebookId);
-      const [sourceData, knowledgeData, conversationData, noteData, settingsData] = await Promise.all([
+      const [sourceData, knowledgeData, conversationData, noteData, settingsData, taskData] = await Promise.all([
         fetch(`/api/sources?${query}`).then((response) => response.json()),
         fetch(`/api/knowledge?${query}`).then((response) => response.json()),
         fetch(`/api/conversations?${query}`).then((response) => response.json()),
         fetch(`/api/notes?${query}`).then((response) => response.json()),
         fetch(`/api/settings?${query}`).then((response) => response.json()),
-      ]) as [{ sources?: Source[] }, { knowledge?: Knowledge; stale?: boolean }, { conversations?: Conversation[] }, { notes?: Note[] }, { settings?: NotebookSettings }];
+        fetch(`/api/tasks?${query}`).then((response) => response.json()),
+      ]) as [{ sources?: Source[] }, { knowledge?: Knowledge; stale?: boolean }, { conversations?: Conversation[] }, { notes?: Note[] }, { settings?: NotebookSettings }, { tasks?: WorkspaceTask[] }];
       if (loadSequence !== notebookLoadSequence.current || activeNotebookRef.current !== notebookId) return;
       const loadedSources = Array.isArray(sourceData.sources) ? sourceData.sources : [];
       setSources(loadedSources);
@@ -162,6 +168,7 @@ export default function Home() {
       setActiveConversationId(null);
       setNotes(noteData.notes || []);
       if (settingsData.settings) setSettings(settingsData.settings);
+      setTasks(taskData.tasks || []);
       if (loadedSources.some((source) => source.enabled !== false) && (!knowledgeData.knowledge || knowledgeData.stale)) void refreshKnowledge(notebookId);
     } catch { notify("暂时无法读取该笔记本"); }
   }
@@ -375,6 +382,23 @@ export default function Home() {
     finally { setGuideLoading(false); }
   }
 
+  async function createWorkspaceTask(type: WorkspaceTask["type"], mode?: "fast" | "deep", format?: string) {
+    const query = window.prompt(type === "research" ? "输入研究问题" : "输入报告/信息图主题（可留空使用笔记本主题）", "")?.trim();
+    if (query === undefined) return;
+    const response = await fetch("/api/tasks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ notebookId: activeNotebookId, type, mode, format, query }) });
+    const data = await response.json() as { task?: WorkspaceTask; error?: string };
+    if (!response.ok || !data.task) return notify(data.error || "任务创建失败");
+    setTasks((items) => [data.task!, ...items]);
+    setActiveView("studio");
+    notify("任务已进入后台队列");
+  }
+
+  useEffect(() => {
+    if (!authUser || !tasks.some((task) => task.status === "queued" || task.status === "running")) return;
+    const timer = window.setInterval(() => { fetch(`/api/tasks?notebookId=${encodeURIComponent(activeNotebookId)}`).then((response) => response.json()).then((data: { tasks?: WorkspaceTask[] }) => { if (data.tasks) setTasks(data.tasks); }).catch(() => undefined); }, 2500);
+    return () => window.clearInterval(timer);
+  }, [activeNotebookId, authUser, tasks]);
+
   async function ask(question = prompt) {
     const clean = question.trim();
     if (!clean || isThinking) return;
@@ -438,9 +462,13 @@ export default function Home() {
     </div>;
   }
 
-  function share() {
-    if (navigator.clipboard) navigator.clipboard.writeText(window.location.href);
-    notify("分享链接已复制");
+  async function share() {
+    const response = await fetch("/api/shares", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ notebookId: activeNotebookId }) });
+    const data = await response.json() as { url?: string; error?: string };
+    if (!response.ok || !data.url) return notify(data.error || "分享链接创建失败");
+    const url = new URL(data.url, window.location.origin).toString();
+    if (navigator.clipboard) await navigator.clipboard.writeText(url);
+    notify("30 天只读分享链接已复制");
   }
 
   if (authLoading) return <main className="auth-shell"><div className="auth-card"><span className="brand-mark">N</span><h1>Nota</h1><p>正在加载你的研究空间…</p></div></main>;
@@ -459,14 +487,14 @@ export default function Home() {
         <div className="recent-label">我的笔记本</div>
         <div className="notebook-list">{notebooks.map((notebook) => <button className={`recent-item ${notebook.id === activeNotebookId ? "active" : ""}`} key={notebook.id} onClick={() => switchNotebook(notebook.id)}><span className="recent-dot" /><span><b>{notebook.name}</b><small>{notebook.id === activeNotebookId ? "当前打开" : "独立资料库"}</small></span></button>)}</div>
         <div className="sidebar-spacer" />
-        <div className="usage-card"><div><span>本月用量</span><b>68%</b></div><div className="usage-track"><i /></div><p>已使用 34 / 50 个来源</p><button onClick={() => notify("升级方案即将开放")}>升级空间</button></div>
+        <div className="usage-card"><div><span>本月 AI 用量</span><b>{quota ? `${Math.round(quota.usage.aiRequests / quota.limits.aiRequestsPerMonth * 100)}%` : "—"}</b></div><div className="usage-track"><i style={{ width: quota ? `${Math.min(100, quota.usage.aiRequests / quota.limits.aiRequestsPerMonth * 100)}%` : "0%" }} /></div><p>{sources.length} / {quota?.limits.sourcesPerNotebook || 50} 个来源 · {notebooks.length} / {quota?.limits.notebooks || 20} 个笔记本</p><button onClick={() => notify("配额可通过服务器环境变量调整")}>查看配额</button></div>
         <div className="profile"><span className="avatar">{authUser.displayName.slice(0, 1)}</span><span><b>{authUser.displayName}</b><small>{authUser.email}</small></span><button aria-label="退出登录" onClick={logout}>退出</button></div>
       </aside>
 
       <section className="workspace" id="workspace">
         <header className="topbar">
           <div><span className="crumb">我的笔记本</span><span className="slash">/</span><b>{activeNotebook.name}</b></div>
-          <div className="top-actions"><button aria-label="笔记本设置" onClick={() => setSettingsOpen(true)}>⚙</button><button aria-label="管理笔记本" onClick={manageNotebook}>•••</button><button className="share" onClick={share}>↗ 分享</button></div>
+          <div className="top-actions"><a className="export-link" href={`/api/export?${notebookQuery()}&format=markdown`}>↓ 导出</a><button aria-label="笔记本设置" onClick={() => setSettingsOpen(true)}>⚙</button><button aria-label="管理笔记本" onClick={manageNotebook}>•••</button><button className="share" onClick={share}>↗ 分享</button></div>
         </header>
 
         <div className="project-head">
@@ -498,9 +526,9 @@ export default function Home() {
           </section>
 
           <section className="chat-panel">
-            <div className="chat-head"><div><span className="spark">✦</span><span><h2>{activeView === "chat" ? "与资料对话" : activeView === "notes" ? "研究笔记" : "知识工作台"}</h2><p>{knowledgeLoading ? "正在自动更新知识视图…" : `基于 ${sources.filter((source) => source.enabled !== false).length} 个已选来源`}</p></span></div>{activeView === "chat" ? <div className="conversation-tools"><select aria-label="历史对话" value={activeConversationId || ""} onChange={(event) => event.target.value ? openConversation(event.target.value) : undefined}><option value="">当前对话</option>{conversations.map((item) => <option value={item.id} key={item.id}>{item.title}</option>)}</select><button onClick={newConversation}>＋ 新对话</button></div> : activeView === "notes" ? <button onClick={() => setActiveView("chat")}>返回对话</button> : <button disabled={knowledgeLoading || !sources.some((source) => source.enabled !== false)} onClick={() => refreshKnowledge()}>↻ 更新</button>}</div>
+            <div className="chat-head"><div><span className="spark">✦</span><span><h2>{activeView === "chat" ? "与资料对话" : activeView === "notes" ? "研究笔记" : activeView === "studio" ? "研究与报告中心" : "知识工作台"}</h2><p>{knowledgeLoading ? "正在自动更新知识视图…" : `基于 ${sources.filter((source) => source.enabled !== false).length} 个已选来源`}</p></span></div>{activeView === "chat" ? <div className="conversation-tools"><select aria-label="历史对话" value={activeConversationId || ""} onChange={(event) => event.target.value ? openConversation(event.target.value) : undefined}><option value="">当前对话</option>{conversations.map((item) => <option value={item.id} key={item.id}>{item.title}</option>)}</select><button onClick={newConversation}>＋ 新对话</button></div> : activeView === "notes" || activeView === "studio" ? <button onClick={() => setActiveView("chat")}>返回对话</button> : <button disabled={knowledgeLoading || !sources.some((source) => source.enabled !== false)} onClick={() => refreshKnowledge()}>↻ 更新</button>}</div>
             <nav className="view-tabs" aria-label="知识视图">
-              {([{ id: "chat", label: "对话" }, { id: "notes", label: `笔记 ${notes.length}` }, { id: "summary", label: "自动摘要" }, { id: "mindmap", label: "思维导图" }, { id: "cards", label: "记忆卡" }, { id: "wiki", label: "Wiki" }] as Array<{ id: WorkspaceView; label: string }>).map((item) => <button className={activeView === item.id ? "active" : ""} key={item.id} onClick={() => setActiveView(item.id)}>{item.label}</button>)}
+              {([{ id: "chat", label: "对话" }, { id: "notes", label: `笔记 ${notes.length}` }, { id: "studio", label: `研究/报告 ${tasks.length}` }, { id: "summary", label: "自动摘要" }, { id: "mindmap", label: "思维导图" }, { id: "cards", label: "记忆卡" }, { id: "wiki", label: "Wiki" }] as Array<{ id: WorkspaceView; label: string }>).map((item) => <button className={activeView === item.id ? "active" : ""} key={item.id} onClick={() => setActiveView(item.id)}>{item.label}</button>)}
             </nav>
             {activeView === "chat" ? <>
               <div className={`chat-body ${messages.length ? "has-messages" : ""}`}>
@@ -516,7 +544,7 @@ export default function Home() {
                 </div>}
               </div>
               <div className="composer"><div><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={handleComposerKey} aria-label="向资料提问" placeholder="向你的资料提问…" rows={1} /><button className="send" aria-label="发送" disabled={!prompt.trim() || isThinking} onClick={() => ask()}>↑</button></div><p>点击回答下方的引用，可定位到对应页、幻灯片或原文片段。</p></div>
-            </> : activeView === "notes" ? <div className="notes-body"><form className="note-compose" onSubmit={(event) => { event.preventDefault(); void saveNote(); }}><input value={noteDraft.title} onChange={(event) => setNoteDraft((draft) => ({ ...draft, title: event.target.value }))} placeholder="笔记标题" /><textarea value={noteDraft.content} onChange={(event) => setNoteDraft((draft) => ({ ...draft, content: event.target.value }))} placeholder="记录观点、结论或下一步…" /><button disabled={!noteDraft.content.trim()}>保存笔记</button></form><div className="note-list">{notes.map((note) => <article key={note.id}><header><div><b>{note.title}</b><small>{new Date(note.updatedAt).toLocaleString("zh-CN")}</small></div><button onClick={() => deleteNote(note.id)}>删除</button></header><ReactMarkdown>{note.content}</ReactMarkdown>{citationButtons(note.citations)}</article>)}{!notes.length && <p className="empty-note">还没有笔记。可手动记录，也可把 AI 回答一键保存。</p>}</div></div> : <div className="knowledge-body">
+            </> : activeView === "notes" ? <div className="notes-body"><form className="note-compose" onSubmit={(event) => { event.preventDefault(); void saveNote(); }}><input value={noteDraft.title} onChange={(event) => setNoteDraft((draft) => ({ ...draft, title: event.target.value }))} placeholder="笔记标题" /><textarea value={noteDraft.content} onChange={(event) => setNoteDraft((draft) => ({ ...draft, content: event.target.value }))} placeholder="记录观点、结论或下一步…" /><button disabled={!noteDraft.content.trim()}>保存笔记</button></form><div className="note-list">{notes.map((note) => <article key={note.id}><header><div><b>{note.title}</b><small>{new Date(note.updatedAt).toLocaleString("zh-CN")}</small></div><button onClick={() => deleteNote(note.id)}>删除</button></header><ReactMarkdown>{note.content}</ReactMarkdown>{citationButtons(note.citations)}</article>)}{!notes.length && <p className="empty-note">还没有笔记。可手动记录，也可把 AI 回答一键保存。</p>}</div></div> : activeView === "studio" ? <div className="studio-body"><div className="studio-actions"><button onClick={() => createWorkspaceTask("research", "fast")}><b>⚡ Fast Research</b><span>快速整合已选资料</span></button><button onClick={() => createWorkspaceTask("research", "deep")}><b>⌁ Deep Research</b><span>规划、核验并深度综合</span></button><button onClick={() => createWorkspaceTask("report", undefined, "研究简报")}><b>☷ 研究报告</b><span>生成可交付 Markdown 报告</span></button><button onClick={() => createWorkspaceTask("infographic", undefined, "信息图文案")}><b>◈ Infographic</b><span>生成可下载的 SVG 信息图</span></button></div><div className="task-list">{tasks.map((task) => <article key={task.id}><header><div><b>{task.title}</b><small>{task.type} · {new Date(task.createdAt).toLocaleString("zh-CN")}</small></div><span className={`task-status ${task.status}`}>{({ queued: "排队中", running: "生成中", completed: "已完成", failed: "失败" })[task.status]}</span></header>{task.error && <p className="task-error">{task.error}</p>}{task.result?.imageSvg && <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(task.result.imageSvg)}`} alt={task.title} />}{task.result?.markdown && <div className="task-result"><ReactMarkdown>{task.result.markdown}</ReactMarkdown></div>}</article>)}{!tasks.length && <p className="empty-note">选择上方工具创建异步研究或报告任务。</p>}</div></div> : <div className="knowledge-body">
               {knowledgeLoading && <div className="knowledge-loading"><span className="welcome-orb">✦</span><b>正在重建知识视图</b><p>分析全部来源并同步摘要、导图、记忆卡与 Wiki…</p></div>}
               {!knowledgeLoading && !knowledge && <div className="knowledge-loading"><span className="welcome-orb">＋</span><b>导入资料后自动生成</b><p>知识视图会随着来源变化自动更新。</p></div>}
               {!knowledgeLoading && knowledge && activeView === "summary" && <section className="summary-view"><span className="view-kicker">自动更新 · {new Date(knowledge.generatedAt).toLocaleString("zh-CN")}</span><h2>{knowledge.summary.title}</h2><p className="summary-overview">{knowledge.summary.overview}</p><div className="insight-list">{knowledge.summary.points.map((point, index) => <article key={index}><span>{String(index + 1).padStart(2, "0")}</span><div><p>{point.text}</p>{citationButtons(point.citations)}</div></article>)}</div></section>}

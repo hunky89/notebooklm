@@ -3,6 +3,7 @@ import { askMiniMax, type MiniMaxMessage } from "@/lib/minimax";
 import { assertNotebookAccess } from "@/lib/notebook-store";
 import { AuthError, requireRequestUser } from "@/lib/auth-store";
 import { mutateWorkspace, readWorkspace, type ConversationMessage } from "@/lib/workspace-store";
+import { consumeAiRequest } from "@/lib/quota-store";
 
 type ChatMessage = { role: "user" | "assistant"; text: string };
 type SourceInput = { id: string; title: string; type: string; content?: string };
@@ -30,6 +31,7 @@ export async function POST(request: Request) {
     const user = await requireRequestUser(request);
     const body = await request.json() as { question?: string; history?: ChatMessage[]; sources?: SourceInput[]; notebookId?: string; conversationId?: string };
     const { notebook } = await assertNotebookAccess(body.notebookId, user.id);
+    await consumeAiRequest(user.id);
     const question = body.question?.trim();
     if (!question) return Response.json({ error: "问题不能为空" }, { status: 400 });
     if (question.length > 4_000) return Response.json({ error: "问题不能超过 4000 个字符" }, { status: 400 });

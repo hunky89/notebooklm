@@ -7,6 +7,7 @@ import { extractDocument, extractWebDocument } from "@/lib/document-parser";
 import { getNotebookDataDirectory, mutateSources, normalizeNotebookId, publicSource, readSources, sourceDetail, type StoredSource } from "@/lib/source-store";
 import { assertNotebookAccess } from "@/lib/notebook-store";
 import { AuthError, requireRequestUser } from "@/lib/auth-store";
+import { quotaLimits } from "@/lib/quota-store";
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
@@ -110,12 +111,14 @@ export async function POST(request: Request) {
     const user = await requireRequestUser(request);
     const notebookId = normalizeNotebookId(new URL(request.url).searchParams.get("notebookId"));
     await assertNotebookAccess(notebookId, user.id, "edit");
+    const existingCount = (await readSources(notebookId)).length;
     const contentLength = Number(request.headers.get("content-length") || 0);
     if (contentLength > MAX_UPLOAD_BYTES) return Response.json({ error: "单次上传不能超过 20MB" }, { status: 413 });
     const contentType = request.headers.get("content-type") || "";
     if (contentType.includes("application/json")) {
       const { url } = await request.json() as { url?: string };
       if (!url?.trim()) return Response.json({ error: "网页链接不能为空" }, { status: 400 });
+      if (existingCount >= quotaLimits.sourcesPerNotebook) return Response.json({ error: `每个笔记本最多 ${quotaLimits.sourcesPerNotebook} 个来源` }, { status: 429 });
       const page = await fetchWebPage(url.trim());
       const now = new Date().toISOString();
       const source: StoredSource = { id: crypto.randomUUID(), title: page.title, type: "WEB", meta: `网页 · ${page.segments.length} 个片段`, color: "mint", content: page.content, segments: page.segments, url: page.url, enabled: true, labels: [], version: 1, checksum: createHash("sha256").update(page.content).digest("hex"), createdAt: now, updatedAt: now, versions: [{ version: 1, createdAt: now }] };
@@ -127,6 +130,7 @@ export async function POST(request: Request) {
     const files = form.getAll("files").filter((item): item is File => item instanceof File);
     if (!files.length) return Response.json({ error: "请选择文件" }, { status: 400 });
     if (files.length > 8) return Response.json({ error: "每次最多上传 8 个文件" }, { status: 400 });
+    if (existingCount + files.length > quotaLimits.sourcesPerNotebook) return Response.json({ error: `每个笔记本最多 ${quotaLimits.sourcesPerNotebook} 个来源` }, { status: 429 });
     const created: StoredSource[] = [];
     const errors: Array<{ name: string; error: string }> = [];
     for (const file of files) {

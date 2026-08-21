@@ -1,5 +1,6 @@
 import { assertNotebookAccess, mutateNotebooks, readNotebooksForUser, removeNotebookData, type Notebook } from "@/lib/notebook-store";
 import { AuthError, requireRequestUser } from "@/lib/auth-store";
+import { quotaLimits } from "@/lib/quota-store";
 
 function cleanName(value: unknown) {
   const name = String(value || "").trim().replace(/\s+/g, " ");
@@ -17,6 +18,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
+    if ((await readNotebooksForUser(user.id)).length >= quotaLimits.notebooks) return Response.json({ error: `最多创建 ${quotaLimits.notebooks} 个笔记本` }, { status: 429 });
     const body = await request.json() as { name?: string };
     const now = new Date().toISOString();
     const notebook: Notebook = { id: crypto.randomUUID(), name: cleanName(body.name), ownerId: user.id, members: [{ userId: user.id, role: "owner" }], createdAt: now, updatedAt: now };

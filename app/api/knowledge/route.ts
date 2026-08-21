@@ -3,6 +3,7 @@ import { readSources, type StoredSource } from "@/lib/source-store";
 import { readKnowledge, writeKnowledge, type CitationRef, type KnowledgeArtifacts, type MindNode } from "@/lib/knowledge-store";
 import { assertNotebookAccess } from "@/lib/notebook-store";
 import { AuthError, requireRequestUser } from "@/lib/auth-store";
+import { consumeAiRequest } from "@/lib/quota-store";
 
 function sourceSignature(sources: StoredSource[]) {
   return sources.map((source) => `${source.id}:${source.version || 1}:${source.updatedAt || source.createdAt}:${source.segments.length}`).join("|");
@@ -71,6 +72,7 @@ export async function POST(request: Request) {
     const signature = sourceSignature(sources);
     const existing = await readKnowledge(notebook.id);
     if (existing?.sourceSignature === signature) return Response.json({ knowledge: existing, stale: false });
+    await consumeAiRequest(user.id);
     const context = buildContext(sources);
     const sourceText = context.map((item) => `[${item.token}] ${item.source.title} / ${item.segment.label}\n${item.segment.text.slice(0, 1400)}`).join("\n\n---\n\n");
     const prompt = `根据下面资料生成可持续更新的知识工作台。JSON 必须严格符合：\n{"summary":{"title":"...","overview":"...","points":[{"text":"...","citations":["S1:C1"]}]},"mindmap":{"label":"...","note":"...","citations":[],"children":[{"label":"...","note":"...","citations":["S1:C1"],"children":[]}]},"cards":[{"question":"...","answer":"...","citations":["S1:C1"]}],"wiki":[{"title":"...","content":"...","citations":["S1:C1"]}]}\n要求：摘要 4-8 个要点；思维导图两层、覆盖主要概念；记忆卡 6-12 张；Wiki 3-8 个条目并整合跨来源信息。\n\n资料：\n${sourceText}`;

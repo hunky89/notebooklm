@@ -3,10 +3,36 @@ import mammoth from "mammoth";
 import { PDFParse } from "pdf-parse";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { promisify } from "node:util";
+import { execFile } from "node:child_process";
 import { chunkText, type SourceSegment } from "@/lib/source-store";
 
 const MAX_CONTENT_CHARS = 160_000;
 PDFParse.setWorker(pathToFileURL(join(process.cwd(), "node_modules/pdf-parse/dist/worker/pdf.worker.mjs")).href);
+const runFile = promisify(execFile);
+
+async function ocrPdf(bytes: Uint8Array) {
+  const directory = await mkdtemp(join(tmpdir(), "nota-ocr-"));
+  try {
+    const input = join(directory, "source.pdf");
+    const prefix = join(directory, "page");
+    await writeFile(input, bytes);
+    await runFile("pdftoppm", ["-f", "1", "-l", "25", "-r", "180", "-png", input, prefix], { maxBuffer: 2_000_000 });
+    const pages = (await readdir(directory)).filter((name) => /^page-\d+\.png$/.test(name)).sort((a, b) => Number(a.match(/\d+/)?.[0]) - Number(b.match(/\d+/)?.[0]));
+    const segments: SourceSegment[] = [];
+    for (let index = 0; index < pages.length; index += 1) {
+      const { stdout } = await runFile("tesseract", [join(directory, pages[index]), "stdout", "-l", process.env.NOTA_OCR_LANGUAGES || "chi_sim+eng", "--psm", "3"], { maxBuffer: 4_000_000 });
+      if (stdout.trim()) segments.push({ id: `page-${index + 1}`, label: `第 ${index + 1} 页 · OCR`, text: stdout.trim() });
+    }
+    return finish(segments);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") throw new Error("该 PDF 没有可提取文字，服务器尚未安装 OCR 组件");
+    throw error;
+  } finally { await rm(directory, { recursive: true, force: true }); }
+}
 
 function decodeEntities(value: string) {
   return value
@@ -103,7 +129,8 @@ export async function extractDocument(file: File) {
     const parser = new PDFParse({ data: bytes });
     try {
       const result = await parser.getText();
-      return finish(result.pages.map((page) => ({ id: `page-${page.num}`, label: `第 ${page.num} 页`, text: page.text })));
+      const parsed = finish(result.pages.map((page) => ({ id: `page-${page.num}`, label: `第 ${page.num} 页`, text: page.text })));
+      return parsed.content.trim().length >= 20 ? parsed : ocrPdf(bytes);
     } finally { await parser.destroy(); }
   }
   if (extension === "docx") {
