@@ -126,7 +126,9 @@ export async function extractDocument(file: File) {
   const extension = file.name.split(".").pop()?.toLowerCase() || "";
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (extension === "pdf") {
-    const parser = new PDFParse({ data: bytes });
+    // pdf.js may transfer and detach the buffer it receives. Keep the original
+    // bytes intact so image-only PDFs can still fall back to the OCR pipeline.
+    const parser = new PDFParse({ data: bytes.slice() });
     try {
       const result = await parser.getText();
       const parsed = finish(result.pages.map((page) => ({ id: `page-${page.num}`, label: `第 ${page.num} 页`, text: page.text })));

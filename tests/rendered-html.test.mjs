@@ -64,3 +64,9 @@ test("scopes sources, chat, knowledge and original files to a notebook", async (
   assert.match(files, /readSources\(notebook\.id\)/);
   assert.match(store, /join\(dataDirectory, "notebooks", id\)/);
 });
+
+test("preserves PDF bytes for the OCR fallback", async () => {
+  const parser = await readFile(new URL("../lib/document-parser.ts", import.meta.url), "utf8");
+  assert.match(parser, /new PDFParse\(\{ data: bytes\.slice\(\) \}\)/);
+  assert.match(parser, /parsed\.content\.trim\(\)\.length >= 20 \? parsed : ocrPdf\(bytes\)/);
+});
