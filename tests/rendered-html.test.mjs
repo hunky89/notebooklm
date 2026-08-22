@@ -80,3 +80,14 @@ test("uses UTF-8-safe attachment names for notebook exports", async () => {
   assert.match(route, /filename\*=UTF-8''/);
   assert.match(route, /fallbackName/);
 });
+
+test("restricts public share creation to notebook owners", async () => {
+  const [route, store] = await Promise.all([
+    readFile(new URL("../app/api/shares/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/share-store.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(route, /assertNotebookAccess\(body\.notebookId, user\.id, "owner"\)/);
+  assert.match(route, /\^\[0-9a-f\]\{64\}\$/);
+  assert.match(store, /tokenHash: hash\(token\)/);
+  assert.match(store, /30 \* 86400_000/);
+});
