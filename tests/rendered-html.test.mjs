@@ -91,3 +91,17 @@ test("restricts public share creation to notebook owners", async () => {
   assert.match(store, /tokenHash: hash\(token\)/);
   assert.match(store, /30 \* 86400_000/);
 });
+
+test("allows files up to 50MB with a bounded batch size", async () => {
+  const [page, route, limits] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/sources/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/upload-limits.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(limits, /MAX_FILE_BYTES = 50 \* 1024 \* 1024/);
+  assert.match(limits, /MAX_UPLOAD_BYTES = 100 \* 1024 \* 1024/);
+  assert.match(page, /file\.size > MAX_FILE_BYTES/);
+  assert.match(page, /单文件最大 \{MAX_FILE_LABEL\}/);
+  assert.match(route, /file\.size > MAX_FILE_BYTES/);
+  assert.doesNotMatch(route, /8MB 限制/);
+});

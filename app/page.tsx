@@ -4,6 +4,7 @@
 
 import { ChangeEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { MAX_FILE_BYTES, MAX_FILE_LABEL, MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "@/lib/upload-limits";
 
 type Source = { id: string; type: string; title: string; meta: string; color: string; url?: string; enabled?: boolean; labels?: string[]; version?: number };
 type Citation = { marker?: string; sourceId: string; segmentId: string; sourceTitle?: string; locator?: string; snippet?: string };
@@ -263,6 +264,9 @@ export default function Home() {
   async function addFiles(files: FileList | File[]) {
     const incoming = Array.from(files);
     if (!incoming.length) return;
+    const oversized = incoming.find((file) => file.size > MAX_FILE_BYTES);
+    if (oversized) return notify(`${oversized.name} 超过 ${MAX_FILE_LABEL} 限制`);
+    if (incoming.reduce((total, file) => total + file.size, 0) > MAX_UPLOAD_BYTES) return notify(`单次上传总大小不能超过 ${MAX_UPLOAD_LABEL}`);
     const notebookId = activeNotebookId;
     setIsImporting(true);
     notify(`正在上传并解析 ${incoming.length} 个文件`);
@@ -553,7 +557,7 @@ export default function Home() {
               {!filteredSources.length && <p className="empty-source">没有匹配的来源</p>}
             </div>
             <button className="drop-zone" onClick={() => fileInput.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); addFiles(event.dataTransfer.files); }}>
-              <span className="upload-icon">↑</span><b>拖拽文件到这里</b><small>支持 PDF、Word、PPT、Excel、EPUB 等</small>
+              <span className="upload-icon">↑</span><b>拖拽文件到这里</b><small>支持 PDF、Word、PPT、Excel、EPUB 等 · 单文件最大 {MAX_FILE_LABEL}</small>
             </button>
             <input ref={fileInput} hidden multiple type="file" accept=".pdf,.docx,.pptx,.xlsx,.epub,.txt,.md,.csv,.html,.htm,.rtf,.json" onChange={(event: ChangeEvent<HTMLInputElement>) => event.target.files && addFiles(event.target.files)} />
           </section>
@@ -601,7 +605,7 @@ export default function Home() {
         <section className="source-modal" role="dialog" aria-modal="true" aria-labelledby="source-modal-title">
           <button className="modal-close" aria-label="关闭" onClick={() => setModalOpen(false)}>×</button>
           <span className="modal-icon">↑</span><h2 id="source-modal-title">添加研究来源</h2><p>导入资料后，Nota 会自动解析并建立可引用的知识索引。</p>
-          <button className="local-upload" disabled={isImporting} onClick={() => fileInput.current?.click()}><b>{isImporting ? "正在解析…" : "从设备上传"}</b><small>PDF、Word、PPTX、Excel、EPUB、Markdown 等</small><span>选择文件 →</span></button>
+          <button className="local-upload" disabled={isImporting} onClick={() => fileInput.current?.click()}><b>{isImporting ? "正在解析…" : "从设备上传"}</b><small>PDF、Word、PPTX、Excel、EPUB、Markdown 等 · 单文件最大 {MAX_FILE_LABEL}</small><span>选择文件 →</span></button>
           <div className="or"><span>或粘贴网页链接</span></div>
           <form onSubmit={addUrl}><input value={urlValue} onChange={(event) => setUrlValue(event.target.value)} placeholder="https://example.com/article" aria-label="网页链接" /><button disabled={isImporting}>{isImporting ? "解析中" : "添加"}</button></form>
         </section>

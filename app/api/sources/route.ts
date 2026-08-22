@@ -8,9 +8,7 @@ import { getNotebookDataDirectory, mutateSources, normalizeNotebookId, publicSou
 import { assertNotebookAccess } from "@/lib/notebook-store";
 import { AuthError, requireRequestUser } from "@/lib/auth-store";
 import { quotaLimits } from "@/lib/quota-store";
-
-const MAX_FILE_BYTES = 8 * 1024 * 1024;
-const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+import { MAX_FILE_BYTES, MAX_FILE_LABEL, MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "@/lib/upload-limits";
 
 function sourceStyle(extension: string) {
   const type = extension.toUpperCase();
@@ -113,7 +111,7 @@ export async function POST(request: Request) {
     await assertNotebookAccess(notebookId, user.id, "edit");
     const existingCount = (await readSources(notebookId)).length;
     const contentLength = Number(request.headers.get("content-length") || 0);
-    if (contentLength > MAX_UPLOAD_BYTES) return Response.json({ error: "单次上传不能超过 20MB" }, { status: 413 });
+    if (contentLength > MAX_UPLOAD_BYTES) return Response.json({ error: `单次上传总大小不能超过 ${MAX_UPLOAD_LABEL}` }, { status: 413 });
     const contentType = request.headers.get("content-type") || "";
     if (contentType.includes("application/json")) {
       const { url } = await request.json() as { url?: string };
@@ -135,7 +133,7 @@ export async function POST(request: Request) {
     const errors: Array<{ name: string; error: string }> = [];
     for (const file of files) {
       try {
-        if (file.size > MAX_FILE_BYTES) throw new Error(`${file.name} 超过 8MB 限制`);
+        if (file.size > MAX_FILE_BYTES) throw new Error(`${file.name} 超过 ${MAX_FILE_LABEL} 限制`);
         const extracted = await extractDocument(file);
         if (extracted.content.trim().length < 20) throw new Error(`${file.name} 未提取到足够正文`);
         const extension = file.name.split(".").pop() || "file"; const style = sourceStyle(extension); const id = crypto.randomUUID(); const filesDirectory = join(getNotebookDataDirectory(notebookId), "files"); await mkdir(filesDirectory, { recursive: true });
