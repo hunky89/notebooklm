@@ -70,3 +70,13 @@ test("preserves PDF bytes for the OCR fallback", async () => {
   assert.match(parser, /new PDFParse\(\{ data: bytes\.slice\(\) \}\)/);
   assert.match(parser, /parsed\.content\.trim\(\)\.length >= 20 \? parsed : ocrPdf\(bytes\)/);
 });
+
+test("uses UTF-8-safe attachment names for notebook exports", async () => {
+  const [page, route] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/export/route.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(page, /className="export-link" download/);
+  assert.match(route, /filename\*=UTF-8''/);
+  assert.match(route, /fallbackName/);
+});

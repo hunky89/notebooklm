@@ -527,7 +527,7 @@ export default function Home() {
       <section className="workspace" id="workspace">
         <header className="topbar">
           <div><span className="crumb">我的笔记本</span><span className="slash">/</span><b>{activeNotebook.name}</b></div>
-          <div className="top-actions"><a className="export-link" href={`/api/export?${notebookQuery()}&format=markdown`}>↓ 导出</a><button aria-label="笔记本设置" onClick={() => setSettingsOpen(true)}>⚙</button><button aria-label="管理笔记本" onClick={manageNotebook}>•••</button><button className="share" onClick={share}>↗ 分享</button></div>
+          <div className="top-actions"><a className="export-link" download href={`/api/export?${notebookQuery()}&format=markdown`}>↓ 导出</a><button aria-label="笔记本设置" onClick={() => setSettingsOpen(true)}>⚙</button><button aria-label="管理笔记本" onClick={manageNotebook}>•••</button><button className="share" onClick={share}>↗ 分享</button></div>
         </header>
 
         <div className="project-head">
